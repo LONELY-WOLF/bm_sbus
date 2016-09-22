@@ -44,8 +44,8 @@ http://arduiniana.org.
 #endif
 
 #define PARITY_NONE 0
-#define PARITY_ODD 	1
-#define PARITY_EVEN 2
+#define PARITY_EVEN 1
+#define PARITY_ODD 	2
 
 class MultiOutSerial
 {
@@ -55,8 +55,8 @@ private:
   volatile uint8_t *_transmitPortRegister[4];
 
   uint16_t _inverse_logic:1;
-  uint8_t _stop_bits = 0;
-  uint8_t _parity = 0;
+  uint8_t _stop_bits;
+  uint8_t _parity;
 
   // private methods
   void setTX(uint8_t transmitPin, int num);
@@ -67,7 +67,7 @@ public:
   // public methods
   MultiOutSerial(uint8_t transmitPin[], bool inverse_logic = false);
   ~MultiOutSerial();
-  void begin(long speed, int stop_bits, int parity);
+  void begin(long speed, uint8_t parity, uint8_t stop_bits);
 
   virtual size_t write(uint8_t byte[]);
   virtual int read();

@@ -29,9 +29,9 @@ The latest version of this library can always be found at
 http://arduiniana.org.
 */
 
-// 
+//
 // Includes
-// 
+//
 #include <avr/interrupt.h>
 #include <avr/pgmspace.h>
 #include <Arduino.h>
@@ -42,28 +42,29 @@ http://arduiniana.org.
 // Private methods
 //
 
-/* static */ 
+/* static */
 void MultiOutSerial::sync()
 {
-  while(!(TIFR2 & 2)) 
+  while (!(TIFR2 & 2))
   {
   }
   TIFR2 = 2; // Reset OC flag
+  TCNT2 = 0; // Count = 0
 }
 
 //
 // Constructor
 //
-MultiOutSerial::MultiOutSerial(uint8_t transmitPin[], bool inverse_logic /* = false */) : 
+MultiOutSerial::MultiOutSerial(uint8_t transmitPin[], bool inverse_logic /* = false */) :
   _inverse_logic(inverse_logic)
 {
-  for(int i = 0; i < 4; i++)
+  for (int i = 0; i < 4; i++)
   {
     setTX(transmitPin[i], i);
   }
   TCCR2B = 2; // CLK / 8 (2 MHz)
   TCNT2 = 0; // Count = 0
-  OCR2A = 20; // Up to 20
+  OCR2A = 19; // Up to 20
   TIFR2 = 2; // Reset OC flag
   TCCR2A = 2; // Start
 }
@@ -93,7 +94,7 @@ void MultiOutSerial::setTX(uint8_t tx, int num)
 // Public methods
 //
 
-void MultiOutSerial::begin(long speed, int stop_bits, int parity)
+void MultiOutSerial::begin(long speed, uint8_t parity, uint8_t stop_bits)
 {
   _stop_bits = stop_bits;
   _parity = parity;
@@ -119,19 +120,48 @@ int MultiOutSerial::available()
 
 size_t MultiOutSerial::write(uint8_t b[])
 {
-  //uint8_t oldSREG = SREG;
+  uint8_t oldSREG = SREG;
+  uint8_t data[4];
+  uint8_t i = 0;
+  uint8_t mask = 1;
+  uint8_t p[4] = {0, 0, 0, 0};
 
   if (_inverse_logic)
   {
-    b[0] = ~b[0];
-    b[1] = ~b[1];
-    b[2] = ~b[2];
-    b[3] = ~b[3];
+    data[0] = ~b[0];
+    data[1] = ~b[1];
+    data[2] = ~b[2];
+    data[3] = ~b[3];
   }
-  //cli();  // turn off interrupts for a clean txmit
+  else
+  {
+    data[0] = b[0];
+    data[1] = b[1];
+    data[2] = b[2];
+    data[3] = b[3];
+  }
 
-  TCNT2 = 0; // Count = 0
-  TIFR2 = 2; // Reset OC flag
+  register uint8_t n = 0;
+
+  // Write each of the 8 bits
+  for (i = 0; i < 8; i++)
+  {
+    for (n = 0; n < 4; n++)
+    {
+      if (data[n] & mask) // choose bit
+      {
+        p[n]++;
+      }
+    }
+    mask <<= 1;
+  }
+  mask = 1;
+  
+  cli();  // turn off interrupts for a clean txmit
+
+  //TCNT2 = 0; // Count = 0
+  //TIFR2 = 2; // Reset OC flag
+  sync();
 
   // Write the start bit
   if (_inverse_logic)
@@ -148,16 +178,14 @@ size_t MultiOutSerial::write(uint8_t b[])
     *_transmitPortRegister[2] &= ~_transmitBitMask[2];
     *_transmitPortRegister[3] &= ~_transmitBitMask[3];
   }
-  
-  sync();
 
   // Write each of the 8 bits
-  for (uint8_t i = 8; i > 0; --i)
+  for (i = 0; i < 8; i++)
   {
-    uint8_t mask = 1;
-    for(uint8_t n = 0; n < 0; n++)
+    sync();
+    for (n = 0; n < 4; n++)
     {
-      if (b[n] & mask) // choose bit
+      if (data[n] & mask) // choose bit
       {
         *_transmitPortRegister[n] |= _transmitBitMask[n]; // send 1
       }
@@ -165,14 +193,45 @@ size_t MultiOutSerial::write(uint8_t b[])
       {
         *_transmitPortRegister[n] &= ~_transmitBitMask[n]; // send 0
       }
-      mask <<= 1;
     }
+    mask <<= 1;
+  }
+
+  if (_parity == PARITY_ODD)
+  {
     sync();
+    for (n = 0; n < 4; n++)
+    {
+      if (p[n] & 1)
+      {
+        *_transmitPortRegister[n] &= ~_transmitBitMask[n]; // send 0
+      }
+      else
+      {
+        *_transmitPortRegister[n] |= _transmitBitMask[n]; // send 1
+      }
+    }
+  }
+  if (_parity == PARITY_EVEN)
+  {
+    sync();
+    for (n = 0; n < 4; n++)
+    {
+      if (p[n] & 1)
+      {
+        *_transmitPortRegister[n] |= _transmitBitMask[n]; // send 1
+      }
+      else
+      {
+        *_transmitPortRegister[n] &= ~_transmitBitMask[n]; // send 0
+      }
+    }
   }
 
   // restore pin to natural state
   if (_inverse_logic)
   {
+    sync();
     *_transmitPortRegister[0] &= ~_transmitBitMask[0];
     *_transmitPortRegister[1] &= ~_transmitBitMask[1];
     *_transmitPortRegister[2] &= ~_transmitBitMask[2];
@@ -180,15 +239,20 @@ size_t MultiOutSerial::write(uint8_t b[])
   }
   else
   {
+    sync();
     *_transmitPortRegister[0] |= _transmitBitMask[0];
     *_transmitPortRegister[1] |= _transmitBitMask[1];
     *_transmitPortRegister[2] |= _transmitBitMask[2];
     *_transmitPortRegister[3] |= _transmitBitMask[3];
   }
-
-  //SREG = oldSREG; // turn interrupts back on
-  sync();
   
+    sync();
+  if (_stop_bits > 1)
+  {
+    sync();
+  }
+  SREG = oldSREG; // turn interrupts back on
+
   return 1;
 }
 
